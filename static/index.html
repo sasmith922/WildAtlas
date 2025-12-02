@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -212,7 +213,9 @@
         }
 
         @keyframes spin {
-            to { transform: rotate(360deg); }
+            to {
+                transform: rotate(360deg);
+            }
         }
 
         .error-message {
@@ -279,6 +282,7 @@
         }
     </style>
 </head>
+
 <body>
     <header>
         <div class="logo">
@@ -405,7 +409,7 @@
         // Fetch and display species data
         async function fetchSpeciesData(countryCode, countryName) {
             const sidebar = document.getElementById('sidebar-content');
-            
+
             // Show loading state
             sidebar.innerHTML = `
                 <div class="sidebar-header">
@@ -419,7 +423,7 @@
 
             try {
                 const response = await fetch(`/api/species/${countryCode}`);
-                
+
                 if (!response.ok) {
                     throw new Error(`HTTP error! status: ${response.status}`);
                 }
@@ -443,7 +447,7 @@
         // Display species data in sidebar
         function displaySpeciesData(data) {
             const sidebar = document.getElementById('sidebar-content');
-            
+
             let speciesHtml = data.species.map(species => {
                 const statusClass = getStatusClass(species.status);
                 return `
@@ -506,4 +510,5 @@
             });
     </script>
 </body>
+
 </html>

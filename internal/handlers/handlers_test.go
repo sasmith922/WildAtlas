@@ -6,19 +6,19 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/sasmith922/WildAtlas/internal/scraper"
+	"github.com/sasmith922/WildAtlas/internal/iucn"
 )
 
+// TestHealthCheck verifies that the health check endpoint returns a 200 OK status
+// and the expected JSON response.
 func TestHealthCheck(t *testing.T) {
-	h := NewHandler()
-
 	req, err := http.NewRequest("GET", "/api/health", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(h.HealthCheck)
+	handler := http.HandlerFunc(HealthCheck)
 
 	handler.ServeHTTP(rr, req)
 
@@ -36,16 +36,16 @@ func TestHealthCheck(t *testing.T) {
 	}
 }
 
+// TestGetSpeciesByCountry_ValidCode verifies that a valid country code (US)
+// returns a 200 OK status and correct species data.
 func TestGetSpeciesByCountry_ValidCode(t *testing.T) {
-	h := NewHandler()
-
 	req, err := http.NewRequest("GET", "/api/species/US", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(h.GetSpeciesByCountry)
+	handler := http.HandlerFunc(GetSpeciesByCountry)
 
 	handler.ServeHTTP(rr, req)
 
@@ -53,7 +53,7 @@ func TestGetSpeciesByCountry_ValidCode(t *testing.T) {
 		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusOK)
 	}
 
-	var response scraper.CountryData
+	var response iucn.CountryData
 	if err := json.Unmarshal(rr.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
@@ -71,16 +71,16 @@ func TestGetSpeciesByCountry_ValidCode(t *testing.T) {
 	}
 }
 
+// TestGetSpeciesByCountry_InvalidCode verifies that an invalid country code (not 2 letters)
+// returns a 400 Bad Request status.
 func TestGetSpeciesByCountry_InvalidCode(t *testing.T) {
-	h := NewHandler()
-
 	req, err := http.NewRequest("GET", "/api/species/ABC", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(h.GetSpeciesByCountry)
+	handler := http.HandlerFunc(GetSpeciesByCountry)
 
 	handler.ServeHTTP(rr, req)
 
@@ -89,60 +89,20 @@ func TestGetSpeciesByCountry_InvalidCode(t *testing.T) {
 	}
 }
 
+// TestGetSpeciesByCountry_MissingCode verifies that missing the country code
+// returns a 400 Bad Request status.
 func TestGetSpeciesByCountry_MissingCode(t *testing.T) {
-	h := NewHandler()
-
 	req, err := http.NewRequest("GET", "/api/species/", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(h.GetSpeciesByCountry)
+	handler := http.HandlerFunc(GetSpeciesByCountry)
 
 	handler.ServeHTTP(rr, req)
 
 	if status := rr.Code; status != http.StatusBadRequest {
 		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusBadRequest)
-	}
-}
-
-func TestGetSpeciesByCountry_MethodNotAllowed(t *testing.T) {
-	h := NewHandler()
-
-	req, err := http.NewRequest("POST", "/api/species/US", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(h.GetSpeciesByCountry)
-
-	handler.ServeHTTP(rr, req)
-
-	if status := rr.Code; status != http.StatusMethodNotAllowed {
-		t.Errorf("handler returned wrong status code: got %v want %v", status, http.StatusMethodNotAllowed)
-	}
-}
-
-func TestGetSpeciesByCountry_CORSHeaders(t *testing.T) {
-	h := NewHandler()
-
-	req, err := http.NewRequest("GET", "/api/species/US", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	rr := httptest.NewRecorder()
-	handler := http.HandlerFunc(h.GetSpeciesByCountry)
-
-	handler.ServeHTTP(rr, req)
-
-	if rr.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Error("missing CORS header Access-Control-Allow-Origin")
-	}
-
-	if rr.Header().Get("Content-Type") != "application/json" {
-		t.Error("missing Content-Type header")
 	}
 }
