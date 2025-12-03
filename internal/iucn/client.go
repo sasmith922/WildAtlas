@@ -40,6 +40,7 @@ type CountryResponse struct {
 type Assessment struct {
 	TaxonScientificName string `json:"taxon_scientific_name"`
 	RedListCategoryCode string `json:"red_list_category_code"`
+	Url                 string `json:"url"`
 }
 
 // /taxa/scientific_name response
@@ -73,6 +74,7 @@ type Species struct {
 	Class          string `json:"class"`
 	Order          string `json:"order"`
 	Family         string `json:"family"`
+	Url            string `json:"url"`
 }
 
 type CountryData struct {
@@ -140,6 +142,16 @@ func (c *Client) FetchAllCountries() error {
 
 func (c *Client) GetSpeciesByCountry(countryCode string) (*CountryData, error) {
 	countryCode = strings.ToUpper(countryCode)
+
+	// =====================================================
+	// DUMMY DATA FALLBACK (Requested by User)
+	// =====================================================
+	if data := getDummyData(countryCode); data != nil {
+		return data, nil
+	}
+
+	// API Logic (Commented out or bypassed for these countries, but kept for others if needed)
+	// For now, we will proceed with API calls for other countries, or you can comment this out entirely.
 
 	url := fmt.Sprintf("%s/countries/%s?token=%s", baseURL, countryCode, c.Token)
 	fmt.Printf("DEBUG: Fetching URL: %s\n", url)
@@ -210,6 +222,7 @@ func (c *Client) GetSpeciesByCountry(countryCode string) (*CountryData, error) {
 			s := Species{
 				ScientificName: a.TaxonScientificName,
 				Status:         mapCategory(a.RedListCategoryCode),
+				Url:            a.Url,
 			}
 
 			if details != nil {

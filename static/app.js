@@ -202,6 +202,13 @@ function displaySpeciesData(data) {
                             <span class="label">Family:</span>
                             <span class="value">${escapeHtml(species.family || 'N/A')}</span>
                         </div>
+                        ${species.url ? `
+                        <div class="detail-item full-width">
+                            <a href="${escapeHtml(species.url)}" target="_blank" class="iucn-link">
+                                View on IUCN Red List <span class="external-icon">↗</span>
+                            </a>
+                        </div>
+                        ` : ''}
                     </div>
                 </div>
             </div>
