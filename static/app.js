@@ -65,10 +65,36 @@ function highlightFeature(e) {
 
 // Handle country click
 function onCountryClick(e) {
+    console.log("LAYER:", e.target);
+    console.log("FEATURE:", e.target.feature);
+
     const layer = e.target;
     const properties = layer.feature.properties;
-    const countryCode = properties.ISO_A2;
-    const countryName = properties.ADMIN;
+    console.log('Clicked country properties:', properties);
+
+    // Try multiple possible keys for the country code
+    let countryCode =
+        properties["ISO3166-1-Alpha-2"] ||
+        properties["ISO_A2"] ||
+        properties["code"];
+
+    // Check if the code exists at all
+    if (!countryCode || typeof countryCode !== "string") {
+        alert(`No usable country code found.\nProperties:\n${JSON.stringify(properties, null, 2)}`);
+        return;
+    }
+
+    // Normalize
+    countryCode = countryCode.trim().toUpperCase();
+
+    // Validate for backend rules
+    if (countryCode.length !== 2 || countryCode === "-99") {
+        alert(`This country does not have a valid ISO code for species data (code: ${countryCode}).`);
+        return;
+    }
+
+    const countryName = properties.name || properties.ADMIN || "Unknown Country";
+
 
     // Reset previous selection
     if (selectedCountry) {
@@ -95,11 +121,11 @@ function onEachFeature(feature, layer) {
     });
 }
 
-// Fetch and display species data
+// Fetch and display species data from our backend API
 async function fetchSpeciesData(countryCode, countryName) {
     const sidebar = document.getElementById('sidebar-content');
 
-    // Show loading state
+    // Show loading state in the sidebar while we fetch data
     sidebar.innerHTML = `
         <div class="sidebar-header">
             <h2>Endangered Species</h2>
@@ -111,16 +137,20 @@ async function fetchSpeciesData(countryCode, countryName) {
     `;
 
     try {
+        // Call our Go backend API
         const response = await fetch(`/api/species/${countryCode}`);
 
         if (!response.ok) {
             throw new Error(`HTTP error! status: ${response.status}`);
         }
 
+        // Parse the JSON response
         const data = await response.json();
+        // Render the data in the sidebar
         displaySpeciesData(data);
     } catch (error) {
         console.error('Error fetching species data:', error);
+        // Show error message to the user
         sidebar.innerHTML = `
             <div class="sidebar-header">
                 <h2>Endangered Species</h2>

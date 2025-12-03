@@ -11,45 +11,29 @@ import (
 
 const baseURL = "https://api.iucnredlist.org/api/v4"
 
-// Client handles interactions with the IUCN Red List API.
-type Client struct {
-	Token             string
-	HTTPClient        *http.Client
-	CountryCodeToName map[string]string
-}
+// =====================================================
+// v4 STRUCTS
+// =====================================================
 
-// NewClient creates a new IUCN API client.
-func NewClient(token string) *Client {
-	c := &Client{
-		Token: token,
-		HTTPClient: &http.Client{
-			Timeout: 10 * time.Second,
-		},
-		CountryCodeToName: make(map[string]string),
-	}
-	// Best effort to populate country names at startup
-	go c.FetchAllCountries()
-	return c
-}
-
-// Structs for v4 API
-
+// /countries response
 type CountryListResponse struct {
 	Countries []struct {
+		Code        string `json:"code"`
 		Description struct {
 			En string `json:"en"`
 		} `json:"description"`
-		Code string `json:"code"`
 	} `json:"countries"`
 }
 
+// /countries/{code} response
 type CountryResponse struct {
 	Country struct {
+		Code        string `json:"code"`
 		Description struct {
 			En string `json:"en"`
 		} `json:"description"`
-		Code string `json:"code"`
 	} `json:"country"`
+
 	Assessments []Assessment `json:"assessments"`
 }
 
@@ -58,6 +42,7 @@ type Assessment struct {
 	RedListCategoryCode string `json:"red_list_category_code"`
 }
 
+// /taxa/scientific_name response
 type TaxonResponse struct {
 	Taxon TaxonDetails `json:"taxon"`
 }
@@ -78,11 +63,11 @@ type CommonName struct {
 	Main     bool   `json:"main"`
 }
 
-// Species represents a species returned by the IUCN API.
+// frontend format
 type Species struct {
-	Name           string `json:"name"`            // Common Name (English)
-	ScientificName string `json:"scientific_name"` // Scientific Name
-	Status         string `json:"status"`          // Mapped from Code
+	Name           string `json:"name"`
+	ScientificName string `json:"scientific_name"`
+	Status         string `json:"status"`
 	Kingdom        string `json:"kingdom"`
 	Phylum         string `json:"phylum"`
 	Class          string `json:"class"`
@@ -90,16 +75,43 @@ type Species struct {
 	Family         string `json:"family"`
 }
 
-// CountryData represents the aggregated data for a country.
 type CountryData struct {
 	Country     string    `json:"country"`
 	CountryCode string    `json:"country_code"`
 	Species     []Species `json:"species"`
 }
 
-// FetchAllCountries fetches the list of all countries to build a name mapping.
+// =====================================================
+// CLIENT INITIALIZATION
+// =====================================================
+
+type Client struct {
+	Token             string
+	HTTPClient        *http.Client
+	CountryCodeToName map[string]string
+}
+
+func NewClient(token string) *Client {
+	c := &Client{
+		Token: token,
+		HTTPClient: &http.Client{
+			Timeout: 15 * time.Second,
+		},
+		CountryCodeToName: make(map[string]string),
+	}
+
+	// async background loading
+	go c.FetchAllCountries()
+	return c
+}
+
+// =====================================================
+// FETCH ALL COUNTRIES (v4)
+// =====================================================
+
 func (c *Client) FetchAllCountries() error {
 	url := fmt.Sprintf("%s/countries?token=%s", baseURL, c.Token)
+
 	resp, err := c.HTTPClient.Get(url)
 	if err != nil {
 		return err
@@ -107,131 +119,154 @@ func (c *Client) FetchAllCountries() error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("failed to fetch countries: %d", resp.StatusCode)
+		return fmt.Errorf("failed country list status: %d", resp.StatusCode)
 	}
 
-	var listResp CountryListResponse
-	if err := json.NewDecoder(resp.Body).Decode(&listResp); err != nil {
+	var data CountryListResponse
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
 		return err
 	}
 
-	for _, country := range listResp.Countries {
-		c.CountryCodeToName[country.Code] = country.Description.En
+	for _, ct := range data.Countries {
+		c.CountryCodeToName[ct.Code] = ct.Description.En
 	}
+
 	return nil
 }
 
-// GetSpeciesByCountry fetches endangered species for a specific country.
+// =====================================================
+// GET SPECIES FOR COUNTRY (v4)
+// =====================================================
+
 func (c *Client) GetSpeciesByCountry(countryCode string) (*CountryData, error) {
 	countryCode = strings.ToUpper(countryCode)
 
 	url := fmt.Sprintf("%s/countries/%s?token=%s", baseURL, countryCode, c.Token)
+	fmt.Printf("DEBUG: Fetching URL: %s\n", url)
 
 	resp, err := c.HTTPClient.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("failed to make request: %v", err)
+		return nil, fmt.Errorf("request failed: %v", err)
 	}
 	defer resp.Body.Close()
+
+	fmt.Printf("DEBUG: API Status Code: %d\n", resp.StatusCode)
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("API returned status: %d", resp.StatusCode)
 	}
 
-	var countryResp CountryResponse
-	if err := json.NewDecoder(resp.Body).Decode(&countryResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %v", err)
+	var data CountryResponse
+	if err := json.NewDecoder(resp.Body).Decode(&data); err != nil {
+		return nil, fmt.Errorf("decode error: %v", err)
 	}
 
+	// ============================
+	// BUILD SPECIES LIST
+	// ============================
 	var speciesList []Species
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 
-	// Limit concurrency to avoid overwhelming the API
+	// Semaphore to limit the number of concurrent API requests to 10.
+	// This prevents us from overwhelming the IUCN API and getting rate-limited.
 	sem := make(chan struct{}, 10)
 
-	for _, assessment := range countryResp.Assessments {
-		// Filter for endangered categories
-		if isEndangered(assessment.RedListCategoryCode) {
+	for _, a := range data.Assessments {
+		// We only care about species that are actually endangered.
+		// Categories: CR (Critically Endangered), EN (Endangered), VU (Vulnerable)
+		if !isEndangered(a.RedListCategoryCode) {
+			continue
+		}
 
-			// Limit to 20 species for performance
-			mu.Lock()
-			if len(speciesList) >= 20 {
-				mu.Unlock()
-				break
-			}
-			// Pre-allocate slot
-			speciesList = append(speciesList, Species{})
-			idx := len(speciesList) - 1
+		// Thread-safe check to limit the total number of species we display to 20.
+		// This ensures the page loads reasonably fast.
+		mu.Lock()
+		if len(speciesList) >= 20 {
 			mu.Unlock()
+			break
+		}
+		// Pre-allocate a slot in the slice
+		speciesList = append(speciesList, Species{})
+		idx := len(speciesList) - 1
+		mu.Unlock()
 
-			wg.Add(1)
-			go func(idx int, a Assessment) {
-				defer wg.Done()
-				sem <- struct{}{}        // Acquire semaphore
-				defer func() { <-sem }() // Release semaphore
+		wg.Add(1)
+		// Launch a goroutine to fetch details for this species in the background
+		go func(idx int, a Assessment) {
+			defer wg.Done()
 
-				details, err := c.GetSpeciesDetails(a.TaxonScientificName)
+			// Acquire token from semaphore (blocks if 10 requests are already running)
+			sem <- struct{}{}
+			defer func() { <-sem }() // Release token when done
 
-				mu.Lock()
-				defer mu.Unlock()
+			// Fetch detailed taxonomy (Kingdom, Phylum, etc.)
+			details, _ := c.GetSpeciesDetails(a.TaxonScientificName)
 
-				s := Species{
-					ScientificName: a.TaxonScientificName,
-					Status:         mapCategory(a.RedListCategoryCode),
-				}
+			// Update the species list in a thread-safe way
+			mu.Lock()
+			defer mu.Unlock()
 
-				if err == nil && details != nil {
-					s.Kingdom = details.KingdomName
-					s.Phylum = details.PhylumName
-					s.Class = details.ClassName
-					s.Order = details.OrderName
-					s.Family = details.FamilyName
+			s := Species{
+				ScientificName: a.TaxonScientificName,
+				Status:         mapCategory(a.RedListCategoryCode),
+			}
 
-					// Find English common name
-					for _, cn := range details.CommonNames {
-						if cn.Language == "eng" {
-							s.Name = cn.Name
-							if cn.Main {
-								break
-							}
-						}
+			if details != nil {
+				s.Kingdom = details.KingdomName
+				s.Phylum = details.PhylumName
+				s.Class = details.ClassName
+				s.Order = details.OrderName
+				s.Family = details.FamilyName
+
+				// Iterate through common names to find the English one
+				for _, cn := range details.CommonNames {
+					if cn.Language == "eng" {
+						s.Name = cn.Name
+						break
 					}
 				}
+			}
+			// Fallback: use scientific name if no common name is found
+			if s.Name == "" {
+				s.Name = s.ScientificName
+			}
 
-				// Fallback if no common name found
-				if s.Name == "" {
-					s.Name = s.ScientificName
-				}
-
-				speciesList[idx] = s
-			}(idx, assessment)
-		}
+			speciesList[idx] = s
+		}(idx, a)
 	}
 
+	// Wait for all goroutines to finish
 	wg.Wait()
 
-	countryName := countryResp.Country.Description.En
-	if countryName == "" {
-		countryName = c.GetCountryName(countryCode)
+	name := data.Country.Description.En
+	if name == "" {
+		name = c.GetCountryName(countryCode)
 	}
 
 	return &CountryData{
-		Country:     countryName,
+		Country:     name,
 		CountryCode: countryCode,
 		Species:     speciesList,
 	}, nil
 }
 
-// GetSpeciesDetails fetches detailed taxonomy information for a species.
+// =====================================================
+// GET SPECIES DETAILS (v4)
+// =====================================================
+
 func (c *Client) GetSpeciesDetails(scientificName string) (*TaxonDetails, error) {
 	parts := strings.Split(scientificName, " ")
 	if len(parts) < 2 {
 		return nil, fmt.Errorf("invalid scientific name: %s", scientificName)
 	}
-	genus := parts[0]
-	species := parts[1]
 
-	url := fmt.Sprintf("%s/taxa/scientific_name?genus_name=%s&species_name=%s&token=%s", baseURL, genus, species, c.Token)
+	genus, species := parts[0], parts[1]
+
+	url := fmt.Sprintf(
+		"%s/taxa/scientific_name?genus_name=%s&species_name=%s&token=%s",
+		baseURL, genus, species, c.Token,
+	)
 
 	resp, err := c.HTTPClient.Get(url)
 	if err != nil {
@@ -240,24 +275,25 @@ func (c *Client) GetSpeciesDetails(scientificName string) (*TaxonDetails, error)
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("status: %d", resp.StatusCode)
+		return nil, fmt.Errorf("taxonomy status %d", resp.StatusCode)
 	}
 
-	var taxonResp TaxonResponse
-	if err := json.NewDecoder(resp.Body).Decode(&taxonResp); err != nil {
+	var tr TaxonResponse
+	if err := json.NewDecoder(resp.Body).Decode(&tr); err != nil {
 		return nil, err
 	}
 
-	return &taxonResp.Taxon, nil
+	return &tr.Taxon, nil
 }
+
+// =====================================================
 
 func isEndangered(code string) bool {
 	switch code {
 	case "CR", "EN", "VU":
 		return true
-	default:
-		return false
 	}
+	return false
 }
 
 func mapCategory(code string) string {
@@ -270,14 +306,13 @@ func mapCategory(code string) string {
 		return "Vulnerable"
 	case "NT":
 		return "Near Threatened"
-	default:
-		return code
 	}
+	return code
 }
 
 func (c *Client) GetCountryName(code string) string {
-	if name, ok := c.CountryCodeToName[strings.ToUpper(code)]; ok {
-		return name
+	if n, ok := c.CountryCodeToName[strings.ToUpper(code)]; ok {
+		return n
 	}
 	return code
 }
